@@ -12,10 +12,14 @@ import {
   Loader2,
   Save,
   Menu,
-  X
+  X,
+  Settings,
+  Key,
+  ShieldCheck,
+  AlertCircle
 } from 'lucide-react';
 import { Button } from './components/Button';
-import { analyzeSituation, synthesizeAdvice } from './services/geminiService';
+import { analyzeSituation, synthesizeAdvice, validateApiKey } from './services/geminiService';
 import { Principle, DecisionRecord, ViewState, RelevantPrinciple } from './types';
 
 // Default starter principles
@@ -27,12 +31,31 @@ const DEFAULT_PRINCIPLES: Principle[] = [
   { id: '5', title: '건강이 최우선', description: '단기적인 이익을 위해 신체적, 정신적 건강을 타협하지 않는다.' },
 ];
 
+// Simple obfuscation for local storage (Not military grade, but prevents plain text reading)
+const encryptKey = (key: string) => {
+  try {
+    return btoa(key);
+  } catch (e) { return ''; }
+};
+
+const decryptKey = (cypher: string) => {
+  try {
+    return atob(cypher);
+  } catch (e) { return ''; }
+};
+
 const App: React.FC = () => {
   // State
   const [view, setView] = useState<ViewState>(ViewState.ONBOARDING);
   const [principles, setPrinciples] = useState<Principle[]>([]);
   const [decisions, setDecisions] = useState<DecisionRecord[]>([]);
   
+  // API Key State
+  const [apiKey, setApiKey] = useState('');
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [tempApiKey, setTempApiKey] = useState('');
+  const [keyStatus, setKeyStatus] = useState<'idle' | 'testing' | 'valid' | 'invalid'>('idle');
+
   // UI State
   const [editingId, setEditingId] = useState<string | null>(null);
 
@@ -47,18 +70,22 @@ const App: React.FC = () => {
   useEffect(() => {
     const savedPrinciples = localStorage.getItem('principia_principles');
     const savedDecisions = localStorage.getItem('principia_decisions');
+    const savedKey = localStorage.getItem('principia_api_key');
 
     if (savedPrinciples) {
       setPrinciples(JSON.parse(savedPrinciples));
       setView(ViewState.DASHBOARD); // Skip onboarding if data exists
     } else {
-      // Pre-fill defaults for onboarding ease, but let user edit
       setPrinciples(DEFAULT_PRINCIPLES);
       setView(ViewState.ONBOARDING);
     }
 
     if (savedDecisions) {
       setDecisions(JSON.parse(savedDecisions));
+    }
+
+    if (savedKey) {
+      setApiKey(decryptKey(savedKey));
     }
   }, []);
 
@@ -74,10 +101,118 @@ const App: React.FC = () => {
     localStorage.setItem('principia_decisions', JSON.stringify(newDecisions));
   };
 
+  const handleSaveApiKey = async () => {
+    setKeyStatus('testing');
+    const isValid = await validateApiKey(tempApiKey);
+    
+    if (isValid) {
+      setKeyStatus('valid');
+      setApiKey(tempApiKey);
+      localStorage.setItem('principia_api_key', encryptKey(tempApiKey));
+      setTimeout(() => {
+        setIsSettingsOpen(false);
+        setKeyStatus('idle');
+      }, 1000);
+    } else {
+      setKeyStatus('invalid');
+    }
+  };
+
+  // --- Components ---
+
+  const SettingsModal = () => {
+    if (!isSettingsOpen) return null;
+
+    return (
+      <div className="fixed inset-0 bg-stone-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in">
+        <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden">
+          <div className="p-6 border-b border-stone-100 flex justify-between items-center bg-stone-50">
+            <h3 className="font-serif text-xl text-stone-800 flex items-center gap-2">
+              <Settings size={20} /> 설정
+            </h3>
+            <button onClick={() => setIsSettingsOpen(false)} className="text-stone-400 hover:text-stone-600">
+              <X size={20} />
+            </button>
+          </div>
+          
+          <div className="p-6 space-y-6">
+            <div>
+              <label className="block text-sm font-semibold text-stone-700 mb-2 flex items-center gap-2">
+                <Key size={16} /> Gemini API Key
+              </label>
+              <p className="text-xs text-stone-500 mb-3">
+                앱 사용을 위해 Google Gemini API Key가 필요합니다. 
+                키는 서버로 전송되지 않으며, 브라우저에 암호화되어 저장됩니다.
+              </p>
+              <div className="relative">
+                <input 
+                  type="password" 
+                  value={tempApiKey}
+                  onChange={(e) => {
+                    setTempApiKey(e.target.value);
+                    setKeyStatus('idle');
+                  }}
+                  placeholder="AIzaSy..."
+                  className="w-full p-3 pl-4 pr-4 border border-stone-200 rounded-lg focus:ring-2 focus:ring-stone-800 focus:outline-none bg-stone-50 font-mono text-sm"
+                />
+              </div>
+            </div>
+
+            {keyStatus === 'invalid' && (
+              <div className="flex items-center gap-2 text-red-600 text-sm bg-red-50 p-3 rounded-lg">
+                <AlertCircle size={16} /> 연결 실패. 키를 확인해주세요.
+              </div>
+            )}
+             {keyStatus === 'valid' && (
+              <div className="flex items-center gap-2 text-green-600 text-sm bg-green-50 p-3 rounded-lg">
+                <ShieldCheck size={16} /> 연결 성공! 키가 저장되었습니다.
+              </div>
+            )}
+
+            <div className="flex gap-3 pt-2">
+               <Button 
+                variant="primary" 
+                className="w-full"
+                onClick={handleSaveApiKey}
+                isLoading={keyStatus === 'testing'}
+                disabled={!tempApiKey}
+              >
+                {keyStatus === 'testing' ? '연결 테스트 중...' : '저장 및 연결 테스트'}
+              </Button>
+            </div>
+            
+            <div className="text-center">
+              <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="text-xs text-stone-400 hover:text-stone-600 underline">
+                API Key 발급받기 (Google AI Studio)
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const Header = () => (
+    <div className="absolute top-4 right-4 z-40">
+      <button 
+        onClick={() => {
+          setTempApiKey(apiKey);
+          setKeyStatus('idle');
+          setIsSettingsOpen(true);
+        }}
+        className="bg-white p-2 rounded-full shadow-sm border border-stone-200 text-stone-500 hover:text-stone-800 transition-colors"
+        title="API Key 설정"
+      >
+        <Settings size={20} />
+      </button>
+    </div>
+  );
+
   // --- Views ---
 
   const renderOnboarding = () => (
-    <div className="max-w-2xl mx-auto py-12 px-4 animate-fade-in">
+    <div className="max-w-2xl mx-auto py-12 px-4 animate-fade-in relative">
+      <Header />
       <div className="text-center mb-12">
         <h1 className="font-serif text-4xl text-stone-800 mb-4">Principia</h1>
         <p className="text-stone-600 text-lg leading-relaxed">
@@ -164,7 +299,7 @@ const App: React.FC = () => {
               const id = Date.now().toString();
               const newPrinciple = { id, title: '새로운 원칙', description: '당신의 가치관에 대한 설명입니다.' };
               setPrinciples([...principles, newPrinciple]);
-              setEditingId(id); // Automatically start editing new principle
+              setEditingId(id);
             }}
             className="w-full py-4 border-2 border-dashed border-stone-300 rounded-xl text-stone-500 hover:border-stone-400 hover:text-stone-700 flex items-center justify-center gap-2 transition-colors"
           >
@@ -188,8 +323,9 @@ const App: React.FC = () => {
   );
 
   const renderDashboard = () => (
-    <div className="max-w-4xl mx-auto py-8 px-4">
-      <header className="mb-12 flex justify-between items-center">
+    <div className="max-w-4xl mx-auto py-8 px-4 relative">
+      <Header />
+      <header className="mb-12 flex justify-between items-center mt-8">
         <div>
           <h1 className="font-serif text-3xl text-stone-800">Principia</h1>
           <p className="text-stone-500">당신의 지혜로운 멘토</p>
@@ -212,6 +348,12 @@ const App: React.FC = () => {
         </p>
         <Button 
           onClick={() => {
+            if (!apiKey) {
+              setTempApiKey('');
+              setIsSettingsOpen(true);
+              alert("먼저 우측 상단 설정에서 API Key를 등록해주세요.");
+              return;
+            }
             setCurrentSituation('');
             setAnalysisResult([]);
             setFinalAdvice('');
@@ -248,8 +390,9 @@ const App: React.FC = () => {
   );
 
   const renderInput = () => (
-    <div className="max-w-2xl mx-auto py-8 px-4 h-full flex flex-col">
-      <button onClick={() => setView(ViewState.DASHBOARD)} className="text-stone-500 hover:text-stone-800 mb-6 flex items-center gap-2">
+    <div className="max-w-2xl mx-auto py-8 px-4 h-full flex flex-col relative">
+      <Header />
+      <button onClick={() => setView(ViewState.DASHBOARD)} className="text-stone-500 hover:text-stone-800 mb-6 flex items-center gap-2 mt-8">
         <ArrowLeft size={18} /> 홈으로 돌아가기
       </button>
 
@@ -271,13 +414,20 @@ const App: React.FC = () => {
           <Button 
             onClick={async () => {
               if (!currentSituation.trim()) return;
+              if (!apiKey) {
+                setIsSettingsOpen(true);
+                return;
+              }
               setIsProcessing(true);
               try {
-                const analysis = await analyzeSituation(currentSituation, principles);
+                const analysis = await analyzeSituation(apiKey, currentSituation, principles);
                 setAnalysisResult(analysis);
                 setView(ViewState.DECISION_REFLECTION);
-              } catch (e) {
-                alert("멘토 연결에 문제가 발생했습니다. 네트워크 상태나 API 키를 확인해주세요.");
+              } catch (e: any) {
+                alert(`오류가 발생했습니다: ${e.message}`);
+                if (e.message.includes('API Key')) {
+                   setIsSettingsOpen(true);
+                }
               } finally {
                 setIsProcessing(false);
               }
@@ -294,8 +444,9 @@ const App: React.FC = () => {
   );
 
   const renderReflection = () => (
-    <div className="max-w-2xl mx-auto py-8 px-4">
-       <div className="mb-8">
+    <div className="max-w-2xl mx-auto py-8 px-4 relative">
+       <Header />
+       <div className="mb-8 mt-8">
         <h2 className="font-serif text-2xl text-stone-800">원칙에 비추어 보기</h2>
         <p className="text-stone-600 mt-2">
           당신의 상황에서 가장 중요하게 고려해야 할 원칙들입니다. 질문에 솔직하게 답하며 생각의 정리를 도와드리겠습니다.
@@ -336,9 +487,13 @@ const App: React.FC = () => {
               alert("모든 질문에 대한 답변을 작성해주세요.");
               return;
             }
+            if (!apiKey) {
+               setIsSettingsOpen(true);
+               return;
+            }
             setIsProcessing(true);
             try {
-              const advice = await synthesizeAdvice(currentSituation, analysisResult);
+              const advice = await synthesizeAdvice(apiKey, currentSituation, analysisResult);
               setFinalAdvice(advice);
               
               // Save
@@ -351,8 +506,8 @@ const App: React.FC = () => {
               };
               saveDecision(record);
               setView(ViewState.DECISION_RESULT);
-            } catch (e) {
-              alert("조언을 생성하는 중 오류가 발생했습니다.");
+            } catch (e: any) {
+              alert(`조언 생성 중 오류: ${e.message}`);
             } finally {
               setIsProcessing(false);
             }
@@ -367,8 +522,9 @@ const App: React.FC = () => {
   );
 
   const renderResult = () => (
-    <div className="max-w-3xl mx-auto py-12 px-4 animate-fade-in">
-      <div className="text-center mb-8">
+    <div className="max-w-3xl mx-auto py-12 px-4 animate-fade-in relative">
+      <Header />
+      <div className="text-center mb-8 mt-8">
         <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-stone-800 text-white mb-6 shadow-lg">
           <CheckCircle2 size={32} />
         </div>
@@ -395,8 +551,9 @@ const App: React.FC = () => {
   );
 
   const renderHistory = () => (
-    <div className="max-w-4xl mx-auto py-8 px-4">
-       <button onClick={() => setView(ViewState.DASHBOARD)} className="text-stone-500 hover:text-stone-800 mb-6 flex items-center gap-2">
+    <div className="max-w-4xl mx-auto py-8 px-4 relative">
+      <Header />
+       <button onClick={() => setView(ViewState.DASHBOARD)} className="text-stone-500 hover:text-stone-800 mb-6 flex items-center gap-2 mt-8">
         <ArrowLeft size={18} /> 대시보드로 돌아가기
       </button>
       <h2 className="font-serif text-2xl text-stone-800 mb-6">결정 히스토리</h2>
@@ -429,8 +586,9 @@ const App: React.FC = () => {
   const renderHistoryDetail = () => {
     if (!viewHistoryItem) return null;
     return (
-      <div className="max-w-3xl mx-auto py-8 px-4">
-        <button onClick={() => setView(ViewState.HISTORY)} className="text-stone-500 hover:text-stone-800 mb-6 flex items-center gap-2">
+      <div className="max-w-3xl mx-auto py-8 px-4 relative">
+        <Header />
+        <button onClick={() => setView(ViewState.HISTORY)} className="text-stone-500 hover:text-stone-800 mb-6 flex items-center gap-2 mt-8">
           <ArrowLeft size={18} /> 목록으로 돌아가기
         </button>
         
@@ -475,8 +633,9 @@ const App: React.FC = () => {
   };
 
   const renderPrinciplesManager = () => (
-    <div className="max-w-2xl mx-auto py-8 px-4">
-       <button onClick={() => setView(ViewState.DASHBOARD)} className="text-stone-500 hover:text-stone-800 mb-6 flex items-center gap-2">
+    <div className="max-w-2xl mx-auto py-8 px-4 relative">
+       <Header />
+       <button onClick={() => setView(ViewState.DASHBOARD)} className="text-stone-500 hover:text-stone-800 mb-6 flex items-center gap-2 mt-8">
         <ArrowLeft size={18} /> 대시보드로 돌아가기
       </button>
       <div className="flex justify-between items-center mb-6">
@@ -538,6 +697,7 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-stone-50 font-sans text-stone-800 selection:bg-stone-200">
+      <SettingsModal />
       {view === ViewState.ONBOARDING && renderOnboarding()}
       {view === ViewState.DASHBOARD && renderDashboard()}
       {view === ViewState.PRINCIPLES && renderPrinciplesManager()}

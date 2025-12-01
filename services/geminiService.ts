@@ -1,20 +1,37 @@
 import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { Principle, RelevantPrinciple } from "../types";
 
-const getAiClient = () => {
-  const apiKey = process.env.API_KEY;
+const getAiClient = (apiKey: string) => {
   if (!apiKey) {
-    throw new Error("API Key is missing. Please ensure process.env.API_KEY is available.");
+    throw new Error("API Key가 제공되지 않았습니다.");
   }
   return new GoogleGenAI({ apiKey });
 };
 
+// 0. Test Connection
+export const validateApiKey = async (apiKey: string): Promise<boolean> => {
+  try {
+    const ai = getAiClient(apiKey);
+    const modelId = "gemini-2.5-flash";
+    // Generate a minimal token to test auth
+    await ai.models.generateContent({
+      model: modelId,
+      contents: "Test",
+    });
+    return true;
+  } catch (error) {
+    console.error("API Key validation failed:", error);
+    return false;
+  }
+};
+
 // Phase 1: Analyze situation and select principles
 export const analyzeSituation = async (
+  apiKey: string,
   situation: string,
   principles: Principle[]
 ): Promise<RelevantPrinciple[]> => {
-  const ai = getAiClient();
+  const ai = getAiClient(apiKey);
   const modelId = "gemini-2.5-flash"; // Good balance of speed and reasoning
 
   const principlesContext = principles
@@ -87,16 +104,17 @@ export const analyzeSituation = async (
 
   } catch (error) {
     console.error("Error analyzing situation:", error);
-    throw new Error("상황 분석에 실패했습니다. 다시 시도해주세요.");
+    throw new Error("상황 분석에 실패했습니다. API Key를 확인하거나 다시 시도해주세요.");
   }
 };
 
 // Phase 2: Synthesize answers and provide advice
 export const synthesizeAdvice = async (
+  apiKey: string,
   situation: string,
   reflections: RelevantPrinciple[]
 ): Promise<string> => {
-  const ai = getAiClient();
+  const ai = getAiClient(apiKey);
   const modelId = "gemini-2.5-flash";
 
   const reflectionContext = reflections
@@ -137,6 +155,6 @@ export const synthesizeAdvice = async (
     return response.text || "현재 조언을 생성할 수 없습니다.";
   } catch (error) {
     console.error("Error synthesizing advice:", error);
-    throw new Error("조언 생성에 실패했습니다.");
+    throw new Error("조언 생성에 실패했습니다. API Key를 확인해주세요.");
   }
 };
